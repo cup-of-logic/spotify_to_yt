@@ -42,36 +42,67 @@ def show_log(category: str, message: str):
 
 
 class ScrapeSpotifyPlaylist:
-    def __init__(self, email: str, password: str, playlist_name: str = None, playlist_link: str = None):
+    def __init__(self, email: str, password: str, playlist_name: str):
         self.email = email
         self.password = password
         self.playlist_name = playlist_name
-        self.playlist_link = playlist_link
         self.driver = None
         self.songs_map = {}
 
         self.main()
 
     def main(self):
-        if self.playlist_link:
-            self.start_scraper(self.playlist_link)
-        else:
-            self.start_scraper(SPOTIFY_URL)
-            self.login()
-            self.open_playlist()
+        show_log(category='INFO',
+                 message="Started Spotify scraper.")
 
-        self.get_song_info()
+        self.start_scraper(SPOTIFY_URL)
+        show_log(category='DEBUG',
+                 message="Set up Chromedriver successfully.")
+
+        try:
+            self.login()
+        except Exception:
+            show_log(category='ERROR',
+                     message=f"Error logging in into account '{self.email}'. Please check email and password, and try again!")
+            exit()
+        finally:
+            show_log(category='INFO',
+                     message=f"Successful login into account: {self.email}")
+
+        try:
+            self.open_playlist()
+        except Exception:
+            show_log(category='ERROR',
+                     message=f"Error opening the playlist '{self.playlist_name}'. Please check if the playlist exists and try again!")
+            exit()
+        finally:
+            show_log(category='INFO',
+                     message=f"Successfully opened playlist '{self.playlist_name}'")
+
+        try:
+            self.get_song_info()
+        except Exception as e:
+            show_log(category='ERROR',
+                     message=f"Error gathering song info: {e}")
+
         self.driver.close()
+
+        show_log(category='INFO',
+                 message=f"Scraped {len(self.songs_map)} songs from playlist {self.playlist_name}")
 
     def start_scraper(self, link):
         try:
             service = Service(os.getenv('CHROME_DRIVER_PATH'))
-            self.driver = webdriver.Chrome(service=service)
+            options = Options()
+            options.add_argument('--headless')
+
+            self.driver = webdriver.Chrome(service=service, options=options)
         except Exception as e:
             show_log(category='ERROR',
                      message=f'Error setting up chromedriver: \"{e}\"'
                      )
             exit()
+
         try:
             self.driver.get(link)
             self.driver.maximize_window()
@@ -120,6 +151,7 @@ class ScrapeSpotifyPlaylist:
         song_container = WebDriverWait(self.driver, timeout=10).until(
                     EC.presence_of_element_located((By.XPATH, f'/html/body/div[4]/div/div[2]/div[3]/div[1]/div[2]/div[2]/div[2]/main/div[1]/section/div[2]/div[3]/div[1]/div[2]/div[2]'))
                 )
+
         retries = 3
         last_map_size = 0
         while retries:
@@ -128,7 +160,9 @@ class ScrapeSpotifyPlaylist:
             )
 
             songs = song_container.find_elements(By.XPATH, f'./div')
+
             for song in songs:
+                # Indexing the song based on the aria-rowindex which starts from 2
                 song_index = int(song.get_attribute('aria-rowindex'))
                 elements = song.find_elements(By.CLASS_NAME, 'encore-text')
                 self.songs_map[song_index - 2] = {
@@ -140,19 +174,22 @@ class ScrapeSpotifyPlaylist:
             self.driver.execute_script("arguments[0].scrollIntoView();", songs[-1])
             time.sleep(3)
 
-            map_size = max(self.songs_map.keys())
+            # If last length of the hashmap remains same for 3 tries, the entire playlist has been scraped
+            map_size = len(self.songs_map)
             if map_size == last_map_size:
                 retries -= 1
             else:
                 retries = 3
                 last_map_size = map_size
-        pprint(self.songs_map)
-        pickle.dump(self.songs_map, open("songs.dat", "wb"))
+
+                show_log(category='INFO',
+                         message=f"Number of songs scraped: {map_size}")
+
+        # pickle.dump(self.songs_map, open("songs.dat", "wb"))
 
 
 if __name__ == '__main__':
     data = pickle.load(open("user_info.dat", "rb"))
     ScrapeSpotifyPlaylist(**data,
-                          playlist_name="Tragic Remix",
-                          # playlist_link="https://open.spotify.com/playlist/23QjZT8a6SNhPNHra9vdqn"
-                        )
+                          playlist_name="Tragic Remix"
+                          )
